@@ -31,6 +31,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var matcher: TextMatcher
     private lateinit var alerter: AlertManager
     private var lastAlertAt = 0L
+    private var frameW = 0
+    private var frameH = 0
+    private var frameRot = 0
 
     private val reqPerms = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera()
@@ -68,14 +71,20 @@ class MainActivity : ComponentActivity() {
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(binding.preview.surfaceProvider) }
-            val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+            val analysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
             analysis.setAnalyzer(executor) { img -> analyze(img) }
             val selector = CameraSelector.DEFAULT_BACK_CAMERA
             cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(this, selector, preview, analysis)
-            binding.overlay.setTransform(binding.preview.outputTransform?.matrix)
+
+            binding.preview.post {
+                binding.overlay.setTransform(binding.preview.outputTransform?.matrix)
+            }
         }, ContextCompat.getMainExecutor(this))
     }
+
 
     private fun analyze(image: ImageProxy) {
         val media = image.image
@@ -85,6 +94,9 @@ class MainActivity : ComponentActivity() {
         }
         val rotation = image.imageInfo.rotationDegrees
         val input = InputImage.fromMediaImage(media, rotation)
+        frameW = image.width
+        frameH = image.height
+        frameRot = image.imageInfo.rotationDegrees
         recognizer.process(input)
             .addOnSuccessListener { result -> handleResult(result) }
             .addOnCompleteListener { image.close() }
@@ -98,18 +110,47 @@ class MainActivity : ComponentActivity() {
             lastAlertAt = now
             alerter.notifyHit(hit)
         }
-        val hitBoxes = mutableListOf<RectF>()
+
+        val hitBoxes = mutableListOf<android.graphics.RectF>()
         for (block in text.textBlocks) {
             for (line in block.lines) {
+                val bb = line.boundingBox ?: continue
                 val s = line.text ?: ""
                 if (matcher.match(s, targets) != null) {
-                    val b = line.boundingBox
-                    if (b != null) hitBoxes.add(RectF(b))
+                    val bufRect = rotatedRectToBuffer(bb, frameW, frameH, frameRot)
+                    hitBoxes.add(bufRect)
                 }
             }
         }
-        binding.overlay.show(hitBoxes)
+        runOnUiThread {
+            binding.overlay.show(hitBoxes)
+        }
     }
+    private fun rotatedRectToBuffer(r: android.graphics.Rect, w: Int, h: Int, rot: Int): android.graphics.RectF {
+        return when ((rot % 360 + 360) % 360) {
+            0 -> android.graphics.RectF(r)
+            90 -> android.graphics.RectF(
+                (h - r.bottom).toFloat(),
+                r.left.toFloat(),
+                (h - r.top).toFloat(),
+                r.right.toFloat()
+            )
+            180 -> android.graphics.RectF(
+                (w - r.right).toFloat(),
+                (h - r.bottom).toFloat(),
+                (w - r.left).toFloat(),
+                (h - r.top).toFloat()
+            )
+            270 -> android.graphics.RectF(
+                r.top.toFloat(),
+                (w - r.right).toFloat(),
+                r.bottom.toFloat(),
+                (w - r.left).toFloat()
+            )
+            else -> android.graphics.RectF(r)
+        }
+    }
+
 
 }
 

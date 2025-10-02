@@ -2,6 +2,7 @@ package com.example.textalert
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
@@ -12,13 +13,14 @@ class OverlayView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? =
     private val boxes = mutableListOf<RectF>()
     private val paint = Paint().apply {
         style = Paint.Style.STROKE
-        strokeWidth = 6f
+        strokeWidth = 8f
         isAntiAlias = true
+        color = Color.RED
     }
     private var transform: Matrix? = null
 
-    fun setTransform(matrix: Matrix?) {
-        transform = matrix
+    fun setTransform(m: Matrix?) {
+        transform = m
     }
 
     fun show(boxesImageSpace: List<RectF>) {
@@ -39,4 +41,3 @@ class OverlayView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? =
         for (r in boxes) canvas.drawRect(r, paint)
     }
 }
-
