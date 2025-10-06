@@ -2,6 +2,9 @@ package com.example.textalert
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.PointF
+import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -17,11 +20,9 @@ import androidx.core.content.ContextCompat
 import com.example.textalert.databinding.ActivityMainBinding
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.concurrent.Executors
-import android.graphics.RectF
-
 
 class MainActivity : ComponentActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -31,11 +32,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var matcher: TextMatcher
     private lateinit var alerter: AlertManager
     private var lastAlertAt = 0L
+
     private var frameW = 0
     private var frameH = 0
     private var frameRot = 0
 
-    private val reqPerms = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    private val reqPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera()
     }
 
@@ -47,6 +49,7 @@ class MainActivity : ComponentActivity() {
         keywordStore = KeywordStore(this)
         matcher = TextMatcher()
         alerter = AlertManager(this)
+
         binding.btnAdd.setOnClickListener {
             val t = binding.inputKeyword.text.toString().trim()
             if (t.isNotEmpty()) {
@@ -56,16 +59,19 @@ class MainActivity : ComponentActivity() {
         }
         binding.btnClear.setOnClickListener {
             keywordStore.clear()
+            binding.overlay.show(emptyList(), frameW, frameH)
         }
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
         } else {
-            reqPerms.launch(Manifest.permission.CAMERA)
+            reqPerm.launch(Manifest.permission.CAMERA)
         }
         if (Build.VERSION.SDK_INT >= 33) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         }
     }
+
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -81,29 +87,26 @@ class MainActivity : ComponentActivity() {
 
             binding.preview.post {
                 binding.overlay.setTransform(binding.preview.outputTransform?.matrix)
+                binding.overlay.bringToFront()
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
-
     private fun analyze(image: ImageProxy) {
-        val media = image.image
-        if (media == null) {
-            image.close()
-            return
-        }
-        val rotation = image.imageInfo.rotationDegrees
-        val input = InputImage.fromMediaImage(media, rotation)
+        val media = image.image ?: run { image.close(); return }
         frameW = image.width
         frameH = image.height
         frameRot = image.imageInfo.rotationDegrees
+        val input = InputImage.fromMediaImage(media, frameRot)
         recognizer.process(input)
             .addOnSuccessListener { result -> handleResult(result) }
             .addOnCompleteListener { image.close() }
     }
+
     private fun handleResult(text: Text) {
         val now = System.currentTimeMillis()
         val full = text.text ?: ""
+        binding.debugText.text = full.take(200).replace("\n", " ")
         val targets = keywordStore.getAll()
         val hit = matcher.match(full, targets)
         if (hit != null && now - lastAlertAt > 1500) {
@@ -111,46 +114,41 @@ class MainActivity : ComponentActivity() {
             alerter.notifyHit(hit)
         }
 
-        val hitBoxes = mutableListOf<android.graphics.RectF>()
+        val hitBoxes = mutableListOf<RectF>()
         for (block in text.textBlocks) {
             for (line in block.lines) {
                 val bb = line.boundingBox ?: continue
                 val s = line.text ?: ""
                 if (matcher.match(s, targets) != null) {
-                    val bufRect = rotatedRectToBuffer(bb, frameW, frameH, frameRot)
-                    hitBoxes.add(bufRect)
+                    hitBoxes.add(mlToBufferRect(bb, frameW, frameH, frameRot))
                 }
             }
         }
-        runOnUiThread {
-            binding.overlay.show(hitBoxes)
-        }
-    }
-    private fun rotatedRectToBuffer(r: android.graphics.Rect, w: Int, h: Int, rot: Int): android.graphics.RectF {
-        return when ((rot % 360 + 360) % 360) {
-            0 -> android.graphics.RectF(r)
-            90 -> android.graphics.RectF(
-                (h - r.bottom).toFloat(),
-                r.left.toFloat(),
-                (h - r.top).toFloat(),
-                r.right.toFloat()
-            )
-            180 -> android.graphics.RectF(
-                (w - r.right).toFloat(),
-                (h - r.bottom).toFloat(),
-                (w - r.left).toFloat(),
-                (h - r.top).toFloat()
-            )
-            270 -> android.graphics.RectF(
-                r.top.toFloat(),
-                (w - r.right).toFloat(),
-                r.bottom.toFloat(),
-                (w - r.left).toFloat()
-            )
-            else -> android.graphics.RectF(r)
-        }
+        runOnUiThread { binding.overlay.show(hitBoxes, frameW, frameH) }
     }
 
-
+    private fun mlToBufferRect(r: Rect, w: Int, h: Int, rot: Int): RectF {
+        val x0 = r.left.toFloat()
+        val y0 = r.top.toFloat()
+        val x1 = r.right.toFloat()
+        val y1 = r.bottom.toFloat()
+        fun mapPoint(x: Float, y: Float): PointF {
+            return when (((rot % 360) + 360) % 360) {
+                0 -> PointF(x, y)
+                90 -> PointF(y, h - x)
+                180 -> PointF(w - x, h - y)
+                270 -> PointF(w - y, x)
+                else -> PointF(x, y)
+            }
+        }
+        val p1 = mapPoint(x0, y0)
+        val p2 = mapPoint(x1, y0)
+        val p3 = mapPoint(x0, y1)
+        val p4 = mapPoint(x1, y1)
+        val left = minOf(p1.x, p2.x, p3.x, p4.x)
+        val top = minOf(p1.y, p2.y, p3.y, p4.y)
+        val right = maxOf(p1.x, p2.x, p3.x, p4.x)
+        val bottom = maxOf(p1.y, p2.y, p3.y, p4.y)
+        return RectF(left, top, right, bottom)
+    }
 }
-
