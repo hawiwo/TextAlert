@@ -13,7 +13,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:scaleType="fillCenter"/>
-
+    <TextView
+        android:id="@+id/debugText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:padding="8dp"
+        android:textSize="12sp"
+        app:layout_constraintStart_toStartOf="@+id/preview"
+        app:layout_constraintEnd_toEndOf="@+id/preview"
+        app:layout_constraintBottom_toTopOf="@+id/bottomBar"/>
     <LinearLayout
         android:id="@+id/bottomBar"
         android:layout_width="0dp"

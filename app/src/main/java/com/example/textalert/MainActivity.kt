@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
     private fun handleResult(text: Text) {
         val now = System.currentTimeMillis()
         val full = text.text ?: ""
+        binding.debugText.text = full.take(200).replace("\n", " ")
         val targets = keywordStore.getAll()
         val hit = matcher.match(full, targets)
         if (hit != null && now - lastAlertAt > 1200) {
