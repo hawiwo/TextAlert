@@ -11,30 +11,8 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/bottomBar"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <com.example.textalert.OverlayView
-        android:id="@+id/overlay"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="@+id/preview"
-        app:layout_constraintBottom_toBottomOf="@+id/preview"
-        app:layout_constraintStart_toStartOf="@+id/preview"
-        app:layout_constraintEnd_toEndOf="@+id/preview" />
-
-    <TextView
-        android:id="@+id/debugText"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:maxLines="2"
-        android:ellipsize="end"
-        android:padding="8dp"
-        android:background="#66000000"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
-        app:layout_constraintStart_toStartOf="@+id/preview"
-        app:layout_constraintEnd_toEndOf="@+id/preview"
-        app:layout_constraintBottom_toTopOf="@+id/bottomBar" />
+        app:layout_constraintEnd_toEndOf="parent"
+        app:scaleType="fillCenter"/>
 
     <LinearLayout
         android:id="@+id/bottomBar"
@@ -51,18 +29,18 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:hint="Suchtext oder Regex" />
+            android:hint="Suchtext oder Regex"/>
 
         <Button
             android:id="@+id/btnAdd"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Add" />
+            android:text="Add"/>
 
         <Button
             android:id="@+id/btnClear"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Clear" />
+            android:text="Clear"/>
     </LinearLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>
