@@ -10,6 +10,7 @@
         android:label="TextAlert"
         android:supportsRtl="true"
         android:theme="@style/Theme.TextAlert">
+        <activity android:name=".SettingsActivity" android:exported="false"/>
         <activity android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
