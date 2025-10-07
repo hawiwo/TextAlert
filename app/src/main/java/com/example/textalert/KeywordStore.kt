@@ -11,6 +11,11 @@ class KeywordStore(ctx: Context) {
         set.add(s)
         prefs.edit { putStringSet("list", set) }
     }
+    fun remove(s: String) {
+        val set = prefs.getStringSet("list", setOf())!!.toMutableSet()
+        set.remove(s)
+        prefs.edit { putStringSet("list", set) }
+    }
     fun clear() {
         prefs.edit { putStringSet("list", setOf()) }
     }

@@ -9,8 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Size
-import android.view.WindowManager
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -18,22 +17,18 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import com.example.textalert.databinding.ActivityMainBinding
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.concurrent.Executors
-import android.view.Menu
-import android.view.MenuItem
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowCompat
+import androidx.preference.PreferenceManager
 
 class MainActivity : AppCompatActivity() {
+    private var beepEnabled = true
     private lateinit var binding: ActivityMainBinding
     private val executor = Executors.newSingleThreadExecutor()
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
@@ -42,25 +37,13 @@ class MainActivity : AppCompatActivity() {
     private val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
     private lateinit var imageCapture: ImageCapture
     private var lastAlertAt = 0L
-
-    private val reqPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startCamera()
-    }
+    private var alertIntervalMs = 1200L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        WindowCompat.setDecorFitsSystemWindows(window, true)
-        binding.toolbar.title = "TextAlert"
-        binding.toolbar.inflateMenu(R.menu.main_menu)
-        binding.toolbar.setOnMenuItemClickListener { item ->
-            if (item.itemId == R.id.action_settings) {
-                startActivity(android.content.Intent(this, SettingsActivity::class.java))
-                true
-            } else false
-        }
 
         keywordStore = KeywordStore(this)
         matcher = TextMatcher()
@@ -72,20 +55,27 @@ class MainActivity : AppCompatActivity() {
                 binding.inputKeyword.text?.clear()
             }
         }
-        binding.btnClear.setOnClickListener {
-            keywordStore.clear()
+        binding.btnClear.setOnClickListener { keywordStore.clear() }
+        binding.btnSettings.setOnClickListener {
+            startActivity(android.content.Intent(this, SettingsActivity::class.java))
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
         } else {
-            reqPerm.launch(Manifest.permission.CAMERA)
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), 0)
         }
         if (Build.VERSION.SDK_INT >= 33) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        beepEnabled = prefs.getBoolean("beep_enabled", true)
+        alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
+    }
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -102,7 +92,6 @@ class MainActivity : AppCompatActivity() {
             analysis.setAnalyzer(executor) { img -> analyze(img) }
 
             imageCapture = ImageCapture.Builder()
-                .setTargetRotation(binding.preview.display.rotation)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build()
 
@@ -127,9 +116,9 @@ class MainActivity : AppCompatActivity() {
         binding.debugText.text = full.take(200).replace("\n", " ")
         val targets = keywordStore.getAll()
         val hit = matcher.match(full, targets)
-        if (hit != null && now - lastAlertAt > 1200) {
+        if (hit != null && now - lastAlertAt > alertIntervalMs) {
             lastAlertAt = now
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
+            if (beepEnabled) tone.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
             takePhoto()
         }
     }

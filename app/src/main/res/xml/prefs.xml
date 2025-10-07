@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
     <Preference
         android:key="manage_keywords"
         android:title="Suchtexte verwalten"
-        android:summary="Anzeigen, hinzufügen, löschen"/>
-</PreferenceScreen>
+        android:summary="Anzeigen, hinzufügen, löschen" />
 
+    <SwitchPreferenceCompat
+        android:key="beep_enabled"
+        android:title="Piepton bei Treffer"
+        android:defaultValue="true" />
+
+    <EditTextPreference
+        android:key="alert_interval_ms"
+        android:title="Mindestabstand Alarm (ms)"
+        android:defaultValue="1200" />
+</PreferenceScreen>

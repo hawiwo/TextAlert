@@ -4,24 +4,12 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/toolbar"
-        android:layout_width="0dp"
-        android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorSurface"
-        app:title="TextAlert"
-        app:titleTextColor="?attr/colorOnSurface"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"/>
-
-
     <androidx.camera.view.PreviewView
         android:id="@+id/preview"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:scaleType="fillCenter"
-        app:layout_constraintTop_toBottomOf="@+id/toolbar"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@+id/debugText"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
@@ -53,19 +41,26 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:hint="Suchtext oder Regex" />
+            android:hint="Suchtext oder Regex"/>
 
         <Button
             android:id="@+id/btnAdd"
-            android:layout_width="wrap_content"
+            android:layout_width="74dp"
             android:layout_height="wrap_content"
-            android:text="Add" />
+            android:text="Add"/>
 
         <Button
             android:id="@+id/btnClear"
-            android:layout_width="wrap_content"
+            android:layout_width="82dp"
             android:layout_height="wrap_content"
-            android:text="Clear" />
+            android:text="Clear"/>
+
+        <Button
+            android:id="@+id/btnSettings"
+            android:layout_width="62dp"
+            android:layout_height="wrap_content"
+            android:text="⚙"
+            android:textSize="18sp"/>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
