@@ -12,6 +12,7 @@
         android:theme="@style/Theme.TextAlert">
         <activity android:name=".SettingsActivity" android:exported="false"/>
         <activity android:name=".KeywordsActivity" android:exported="false"/>
+        <activity android:name=".RegexHelpActivity" android:exported="false"/>
         <activity android:name=".MainActivity"
             android:exported="true">
             <intent-filter>

@@ -34,5 +34,14 @@
         android:max="100"
         android:defaultValue="60"
         />
+    <SwitchPreferenceCompat
+        android:key="extract_values_enabled"
+        android:title="Zahlenwerte erkennen"
+        android:defaultValue="false"/>
+
+    <Preference
+        android:key="regex_help"
+        android:title="Regex-Kurzhilfe"
+        android:summary="Beispiele und Copy/Paste"/>
 
 </PreferenceScreen>

@@ -36,6 +36,8 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
 
     // Settings-Flags (werden in onCreate und onResume aus Prefs geladen)
+    private var extractValuesEnabled = false
+    private val extractor = ValueExtractor()
     private var fuzzyStrength = 60
     private lateinit var matcher: TextMatcher
     private var regexCaseInsensitive = true
@@ -68,6 +70,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        extractValuesEnabled = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("extract_values_enabled", false)
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -139,6 +142,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onResume() {
+        extractValuesEnabled = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("extract_values_enabled", false)
         super.onResume()
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         regexCaseInsensitive = prefs.getBoolean("regex_case_insensitive", true)
@@ -195,6 +199,13 @@ class MainActivity : AppCompatActivity() {
     private fun handleResult(text: Text) {
         val now = System.currentTimeMillis()
         val full = text.text ?: ""
+        if (extractValuesEnabled) {
+            val vals = extractor.extract(full)
+            if (vals.isNotEmpty()) {
+                val s = vals.joinToString("  ") { "${it.label}: ${it.value}" }
+                binding.debugText.text = s.take(200)
+            }
+        }
         binding.debugText.text = full.take(200).replace("\n", " ")
         val targets = keywordStore.getAll()
         val hit = matcher.match(full, targets)
