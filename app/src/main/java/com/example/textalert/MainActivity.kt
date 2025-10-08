@@ -38,11 +38,6 @@ import android.graphics.RectF
 class MainActivity : AppCompatActivity() {
     private lateinit var yuv: YuvToRgbConverter
     private var annotatePhoto = true
-    private var lastBoxes = emptyList<android.graphics.RectF>()
-    private var lastOcrW = 0
-    private var lastOcrH = 0
-    private var lastSrcW = 0
-    private var lastSrcH = 0
 
     // Settings-Flags (werden in onCreate und onResume aus Prefs geladen)
     private var extractValuesEnabled = false
@@ -211,8 +206,6 @@ class MainActivity : AppCompatActivity() {
         val ocrH = if (rotation % 180 == 0) image.height else image.width
         recognizer.process(input)
             .addOnSuccessListener { result ->
-                lastOcrW = ocrW
-                lastOcrH = ocrH
                 handleResult(result)
             }
             .addOnCompleteListener { image.close() }
@@ -233,7 +226,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            lastBoxes = boxes
         }
         if (hit != null && now - lastAlertAt > alertIntervalMs) {
             lastAlertAt = now
@@ -242,24 +234,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
-    private fun estimateMlImageSize(t: com.google.mlkit.vision.text.Text): Pair<Int, Int> {
-        var minX = Int.MAX_VALUE
-        var minY = Int.MAX_VALUE
-        var maxX = Int.MIN_VALUE
-        var maxY = Int.MIN_VALUE
-        for (b in t.textBlocks) {
-            b.boundingBox?.let {
-                if (it.left < minX) minX = it.left
-                if (it.top < minY) minY = it.top
-                if (it.right > maxX) maxX = it.right
-                if (it.bottom > maxY) maxY = it.bottom
-            }
-        }
-        val w = if (maxX > minX) maxX - minX else 0
-        val h = if (maxY > minY) maxY - minY else 0
-        return Pair(w, h)
-    }
     private fun takePhoto() {
         if (!this::imageCapture.isInitialized) return
 
@@ -492,55 +466,6 @@ class MainActivity : AppCompatActivity() {
         }
         contentResolver.openInputStream(uri)?.use { return android.graphics.BitmapFactory.decodeStream(it, null, opts2) }
         return null
-    }
-
-    private fun saveAnnotatedCopy(srcUri: android.net.Uri, baseName: String) {
-        try {
-            if (lastBoxes.isEmpty() || lastOcrW <= 0 || lastOcrH <= 0) return
-
-            val exifIn = contentResolver.openInputStream(srcUri) ?: return
-            val exif = androidx.exifinterface.media.ExifInterface(exifIn)
-            exifIn.close()
-            val orientation = exif.getAttributeInt(
-                androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
-                androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
-            )
-
-            val imgIn = contentResolver.openInputStream(srcUri) ?: return
-            var bmp = android.graphics.BitmapFactory.decodeStream(imgIn)
-            imgIn.close()
-            bmp = applyExif(bmp, orientation)
-
-            val mutable = bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-            val canvas = android.graphics.Canvas(mutable)
-            val paint = android.graphics.Paint().apply {
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 6f
-                color = android.graphics.Color.RED
-                isAntiAlias = true
-            }
-
-            val sx = mutable.width.toFloat() / lastOcrW.toFloat()
-            val sy = mutable.height.toFloat() / lastOcrH.toFloat()
-            for (r in lastBoxes) {
-                val mr = RectF(r.left * sx, r.top * sy, r.right * sx, r.bottom * sy)
-                canvas.drawRect(mr, paint)
-            }
-
-
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, "${baseName}_marked.jpg")
-                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/TextAlert")
-            }
-            val destUri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
-            contentResolver.openOutputStream(destUri)?.use {
-                mutable.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it)
-            }
-            Toast.makeText(this, "Markierte Kopie gespeichert", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Konnte markierte Kopie nicht speichern: ${e.message}", Toast.LENGTH_LONG).show()
-        }
     }
     private fun applyExif(src: android.graphics.Bitmap, orientation: Int): android.graphics.Bitmap {
         val m = android.graphics.Matrix()
