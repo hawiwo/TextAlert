@@ -50,17 +50,10 @@
             android:text="Add"/>
 
         <Button
-            android:id="@+id/btnClear"
-            android:layout_width="82dp"
-            android:layout_height="wrap_content"
-            android:text="Clear"/>
-
-        <Button
             android:id="@+id/btnSettings"
             android:layout_width="62dp"
             android:layout_height="wrap_content"
-            android:text="⚙"
-            android:textSize="18sp"/>
+            android:text="⚙"/>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

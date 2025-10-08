@@ -16,4 +16,12 @@
         android:layout_margin="16dp"
         android:contentDescription="Add"
         android:src="@android:drawable/ic_input_add"/>
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/kwClear"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:contentDescription="Alle löschen"
+        android:src="@android:drawable/ic_menu_delete"/>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

@@ -1,7 +1,11 @@
 package com.example.textalert
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -9,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Size
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -19,16 +24,17 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.preference.PreferenceManager
 import com.example.textalert.databinding.ActivityMainBinding
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.io.File
 import java.util.concurrent.Executors
-import androidx.preference.PreferenceManager
 
 class MainActivity : AppCompatActivity() {
-    private var beepEnabled = true
+
     private lateinit var binding: ActivityMainBinding
     private val executor = Executors.newSingleThreadExecutor()
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
@@ -38,6 +44,23 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageCapture: ImageCapture
     private var lastAlertAt = 0L
     private var alertIntervalMs = 1200L
+    private var beepEnabled = true
+    private var photoOnMatch = false
+    private var pauseOnLock = true
+
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var isCameraRunning = false
+    private var analysis: ImageAnalysis? = null
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (!pauseOnLock) return
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> stopCamera()
+                Intent.ACTION_USER_PRESENT -> startCameraIfAllowed()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,16 +71,19 @@ class MainActivity : AppCompatActivity() {
         keywordStore = KeywordStore(this)
         matcher = TextMatcher()
 
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         binding.btnAdd.setOnClickListener {
             val t = binding.inputKeyword.text.toString().trim()
-            if (t.isNotEmpty()) {
-                keywordStore.add(t)
+            if (t.isEmpty()) return@setOnClickListener
+            val added = keywordStore.add(t)
+            if (added) {
+                android.widget.Toast.makeText(this, "Hinzugefügt: $t", android.widget.Toast.LENGTH_SHORT).show()
                 binding.inputKeyword.text?.clear()
+            } else {
+                android.widget.Toast.makeText(this, "Schon vorhanden: $t", android.widget.Toast.LENGTH_SHORT).show()
             }
-        }
-        binding.btnClear.setOnClickListener { keywordStore.clear() }
-        binding.btnSettings.setOnClickListener {
-            startActivity(android.content.Intent(this, SettingsActivity::class.java))
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -68,6 +94,24 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         }
+        if (Build.VERSION.SDK_INT <= 28 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 1)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        registerReceiver(screenReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+        })
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(screenReceiver)
     }
 
     override fun onResume() {
@@ -75,30 +119,44 @@ class MainActivity : AppCompatActivity() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
         beepEnabled = prefs.getBoolean("beep_enabled", true)
         alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
+        pauseOnLock = prefs.getBoolean("pause_on_lock", true)
+        photoOnMatch = prefs.getBoolean("photo_on_match", false)
+        if (this::imageCapture.isInitialized) {
+            imageCapture.targetRotation = binding.preview.display.rotation
+        }
     }
+
+    private fun startCameraIfAllowed() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED && !isCameraRunning) {
+            startCamera()
+        }
+    }
+
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-
+            cameraProvider = cameraProviderFuture.get()
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(binding.preview.surfaceProvider)
             }
-
-            val analysis = ImageAnalysis.Builder()
+            analysis = ImageAnalysis.Builder()
                 .setTargetResolution(Size(1920, 1080))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-            analysis.setAnalyzer(executor) { img -> analyze(img) }
-
+                .build().also { a -> a.setAnalyzer(executor) { img -> analyze(img) } }
             imageCapture = ImageCapture.Builder()
+                .setTargetRotation(binding.preview.display.rotation)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build()
-
             val selector = CameraSelector.DEFAULT_BACK_CAMERA
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(this, selector, preview, analysis, imageCapture)
+            cameraProvider?.unbindAll()
+            cameraProvider?.bindToLifecycle(this, selector, preview, analysis, imageCapture)
+            isCameraRunning = true
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun stopCamera() {
+        cameraProvider?.unbindAll()
+        isCameraRunning = false
     }
 
     private fun analyze(image: ImageProxy) {
@@ -119,28 +177,41 @@ class MainActivity : AppCompatActivity() {
         if (hit != null && now - lastAlertAt > alertIntervalMs) {
             lastAlertAt = now
             if (beepEnabled) tone.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
-            takePhoto()
+            if (photoOnMatch) takePhoto()
         }
     }
 
     private fun takePhoto() {
-        val name = "TextAlert_${System.currentTimeMillis()}"
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/TextAlert")
+        if (!this::imageCapture.isInitialized) return
+        val fileName = "TextAlert_${System.currentTimeMillis()}.jpg"
+        val output = if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/TextAlert")
+            }
+            ImageCapture.OutputFileOptions.Builder(
+                contentResolver,
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                values
+            ).build()
+        } else {
+            val base = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES)
+            val dir = File(base, "TextAlert")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, fileName)
+            ImageCapture.OutputFileOptions.Builder(file).build()
         }
-        val output = ImageCapture.OutputFileOptions.Builder(
-            contentResolver,
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            values
-        ).build()
         imageCapture.takePicture(
             output,
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {}
-                override fun onError(exception: ImageCaptureException) {}
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    Toast.makeText(this@MainActivity, "Foto gespeichert", Toast.LENGTH_SHORT).show()
+                }
+                override fun onError(exception: ImageCaptureException) {
+                    Toast.makeText(this@MainActivity, "Foto fehlgeschlagen: ${exception.message}", Toast.LENGTH_LONG).show()
+                }
             }
         )
     }

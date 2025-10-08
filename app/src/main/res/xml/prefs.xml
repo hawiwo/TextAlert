@@ -15,4 +15,12 @@
         android:key="alert_interval_ms"
         android:title="Mindestabstand Alarm (ms)"
         android:defaultValue="1200" />
+    <SwitchPreferenceCompat
+        android:key="pause_on_lock"
+        android:title="Bei Sperre/Bildschirmschoner pausieren"
+        android:defaultValue="true"/>
+    <SwitchPreferenceCompat
+        android:key="photo_on_match"
+        android:title="Foto bei Treffer"
+        android:defaultValue="false"/>
 </PreferenceScreen>
