@@ -35,18 +35,23 @@ import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
+    // Settings-Flags (werden in onCreate und onResume aus Prefs geladen)
+    private var fuzzyStrength = 60
+    private lateinit var matcher: TextMatcher
+    private var regexCaseInsensitive = true
+    private var fuzzyEnabled = true
+    private var beepEnabled = true
+    private var photoOnMatch = false
+    private var pauseOnLock = true
+    private var alertIntervalMs = 1200L
+
     private lateinit var binding: ActivityMainBinding
     private val executor = Executors.newSingleThreadExecutor()
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
     private lateinit var keywordStore: KeywordStore
-    private lateinit var matcher: TextMatcher
     private val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
     private lateinit var imageCapture: ImageCapture
     private var lastAlertAt = 0L
-    private var alertIntervalMs = 1200L
-    private var beepEnabled = true
-    private var photoOnMatch = false
-    private var pauseOnLock = true
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var isCameraRunning = false
@@ -67,10 +72,28 @@ class MainActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        regexCaseInsensitive = prefs.getBoolean("regex_case_insensitive", true)
+        fuzzyEnabled = prefs.getBoolean("fuzzy_enabled", true)
+        fuzzyStrength = prefs.getInt("fuzzy_strength", 60)
+        matcher = TextMatcher({ regexCaseInsensitive }, { fuzzyEnabled }, { fuzzyStrength })
+
+
+        // Prefs laden (inkl. Fuzzy & Case-Insensitive)
+        //val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        regexCaseInsensitive = prefs.getBoolean("regex_case_insensitive", true)
+        fuzzyEnabled = prefs.getBoolean("fuzzy_enabled", true)
+        beepEnabled = prefs.getBoolean("beep_enabled", true)
+        photoOnMatch = prefs.getBoolean("photo_on_match", false)
+        pauseOnLock = prefs.getBoolean("pause_on_lock", true)
+        alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
 
         keywordStore = KeywordStore(this)
-        matcher = TextMatcher()
 
+        // Matcher EINMAL bauen – Lambdas lesen immer die aktuellen Variablen
+        matcher = TextMatcher({ regexCaseInsensitive }, { fuzzyEnabled })
+
+        // UI-Handler
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
@@ -79,13 +102,14 @@ class MainActivity : AppCompatActivity() {
             if (t.isEmpty()) return@setOnClickListener
             val added = keywordStore.add(t)
             if (added) {
-                android.widget.Toast.makeText(this, "Hinzugefügt: $t", android.widget.Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Hinzugefügt: $t", Toast.LENGTH_SHORT).show()
                 binding.inputKeyword.text?.clear()
             } else {
-                android.widget.Toast.makeText(this, "Schon vorhanden: $t", android.widget.Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Schon vorhanden: $t", Toast.LENGTH_SHORT).show()
             }
         }
 
+        // Permissions
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
         } else {
@@ -117,15 +141,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        regexCaseInsensitive = prefs.getBoolean("regex_case_insensitive", true)
+        fuzzyEnabled = prefs.getBoolean("fuzzy_enabled", true)
+        fuzzyStrength = prefs.getInt("fuzzy_strength", 60)
         beepEnabled = prefs.getBoolean("beep_enabled", true)
-        alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
-        pauseOnLock = prefs.getBoolean("pause_on_lock", true)
         photoOnMatch = prefs.getBoolean("photo_on_match", false)
-        if (this::imageCapture.isInitialized) {
-            imageCapture.targetRotation = binding.preview.display.rotation
-        }
+        pauseOnLock = prefs.getBoolean("pause_on_lock", true)
+        alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
+        if (this::imageCapture.isInitialized) imageCapture.targetRotation = binding.preview.display.rotation
     }
-
     private fun startCameraIfAllowed() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED && !isCameraRunning) {
             startCamera()

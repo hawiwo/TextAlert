@@ -23,4 +23,16 @@
         android:key="photo_on_match"
         android:title="Foto bei Treffer"
         android:defaultValue="false"/>
+    <SwitchPreferenceCompat
+        android:key="fuzzy_enabled"
+        android:title="Teilwort-/Fuzzy-Suche"
+        android:defaultValue="true"/>
+    <SeekBarPreference
+        android:key="fuzzy_strength"
+        android:title="Fuzzy-Stärke"
+        android:min="0"
+        android:max="100"
+        android:defaultValue="60"
+        />
+
 </PreferenceScreen>
