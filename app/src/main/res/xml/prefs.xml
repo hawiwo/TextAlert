@@ -24,6 +24,10 @@
         android:title="Foto bei Treffer"
         android:defaultValue="false"/>
     <SwitchPreferenceCompat
+        android:key="annotate_photo"
+        android:title="Treffer im Foto markieren"
+        android:defaultValue="true"/>
+    <SwitchPreferenceCompat
         android:key="fuzzy_enabled"
         android:title="Teilwort-/Fuzzy-Suche"
         android:defaultValue="true"/>
@@ -38,7 +42,6 @@
         android:key="extract_values_enabled"
         android:title="Zahlenwerte erkennen"
         android:defaultValue="false"/>
-
     <Preference
         android:key="regex_help"
         android:title="Regex-Kurzhilfe"
