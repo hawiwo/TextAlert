@@ -36,9 +36,7 @@ import androidx.camera.core.AspectRatio
 import android.graphics.RectF
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var yuv: YuvToRgbConverter
     private var annotatePhoto = true
-
     // Settings-Flags (werden in onCreate und onResume aus Prefs geladen)
     private var extractValuesEnabled = false
     private val extractor = ValueExtractor()
@@ -74,7 +72,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        yuv = YuvToRgbConverter(this)
         extractValuesEnabled = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("extract_values_enabled", false)
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
