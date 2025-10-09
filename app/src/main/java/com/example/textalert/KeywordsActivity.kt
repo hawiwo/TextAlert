@@ -5,13 +5,14 @@ import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputEditText
-import androidx.recyclerview.widget.DividerItemDecoration
 
 class KeywordsActivity : AppCompatActivity() {
     private lateinit var clearFab: FloatingActionButton
@@ -28,34 +29,28 @@ class KeywordsActivity : AppCompatActivity() {
         list = findViewById(R.id.kwList)
         fab = findViewById(R.id.kwAdd)
         clearFab = findViewById(R.id.kwClear)
-        adapter = KeywordsAdapter(store.getAll().sorted())
-        list.layoutManager = LinearLayoutManager(this)
-        list.adapter = adapter
+
         adapter = KeywordsAdapter(store.getAll().sorted())
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
         list.addItemDecoration(DividerItemDecoration(this, LinearLayoutManager.VERTICAL))
         list.clipToPadding = false
-        list.clipToPadding = false
 
-        // Insets: Statusleiste oben als Padding, Navigationsleiste unten als Padding/Margin
         ViewCompat.setOnApplyWindowInsetsListener(list) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
             v.setPadding(v.paddingLeft, bars.top, v.paddingRight, bars.bottom)
-
-            fun bumpBottomMargin(fab: FloatingActionButton) {
-                val lp = fab.layoutParams as ViewGroup.MarginLayoutParams
+            fun bumpBottomMargin(fabBtn: FloatingActionButton) {
+                val lp = fabBtn.layoutParams as ViewGroup.MarginLayoutParams
                 val target = bars.bottom + 16.dp()
                 if (lp.bottomMargin != target) {
                     lp.bottomMargin = target
-                    fab.layoutParams = lp
+                    fabBtn.layoutParams = lp
                 }
             }
             bumpBottomMargin(fab)
             bumpBottomMargin(clearFab)
             insets
         }
-
         ViewCompat.requestApplyInsets(list)
 
         ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
@@ -69,19 +64,27 @@ class KeywordsActivity : AppCompatActivity() {
 
         fab.setOnClickListener {
             val container = layoutInflater.inflate(R.layout.dialog_add_keyword, null)
-            val input = container.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.editKeyword)
-            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            val input = container.findViewById<TextInputEditText>(R.id.editKeyword)
+            MaterialAlertDialogBuilder(this)
                 .setTitle("Suchtext hinzufügen")
                 .setView(container)
                 .setPositiveButton("OK") { _, _ ->
                     val t = input.text?.toString()?.trim().orEmpty()
-                    if (t.isNotEmpty()) {
-                        val added = store.add(t)
-                        if (added) {
-                            adapter.setData(store.getAll().sorted())
-                            com.google.android.material.snackbar.Snackbar.make(list, "Hinzugefügt: $t", com.google.android.material.snackbar.Snackbar.LENGTH_SHORT).show()
+                    if (t.isEmpty()) {
+                        Snackbar.make(list, "Bitte Text eingeben", Snackbar.LENGTH_SHORT).show()
+                    } else {
+                        val looksRegex = RegexUtils.looksLikeRegex(t)
+                        val validRegex = if (looksRegex) RegexUtils.compileOrNull(t, ignoreCase = true) != null else true
+                        if (!validRegex) {
+                            Snackbar.make(list, "Ungültiges Regex-Muster – nicht gespeichert", Snackbar.LENGTH_LONG).show()
                         } else {
-                            com.google.android.material.snackbar.Snackbar.make(list, "Schon vorhanden: $t", com.google.android.material.snackbar.Snackbar.LENGTH_SHORT).show()
+                            val added = store.add(t)
+                            if (added) {
+                                adapter.setData(store.getAll().sorted())
+                                Snackbar.make(list, "Hinzugefügt: $t", Snackbar.LENGTH_SHORT).show()
+                            } else {
+                                Snackbar.make(list, "Schon vorhanden: $t", Snackbar.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 }
@@ -89,9 +92,8 @@ class KeywordsActivity : AppCompatActivity() {
                 .show()
         }
 
-
         clearFab.setOnClickListener {
-            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            MaterialAlertDialogBuilder(this)
                 .setTitle("Alle Suchtexte löschen?")
                 .setMessage("Diese Aktion kann nicht rückgängig gemacht werden.")
                 .setPositiveButton("Löschen") { _, _ ->
