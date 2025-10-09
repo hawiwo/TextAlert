@@ -20,7 +20,9 @@
 
     <Button
         android:id="@+id/rxCopy"
-        android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="Kopieren" android:layout_marginTop="6dp"/>
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hinzufügen"
+        android:layout_marginTop="6dp"/>
 </LinearLayout>
 

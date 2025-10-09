@@ -10,9 +10,7 @@ import androidx.recyclerview.widget.RecyclerView
 class RegexAdapter(private val data: List<RegexItem>, private val onCopy: OnCopy) :
     RecyclerView.Adapter<RegexAdapter.VH>() {
 
-    interface OnCopy {
-        fun copy(pattern: String)
-    }
+    interface OnCopy { fun copy(pattern: String) }
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {
         val title: TextView = v.findViewById(R.id.rxTitle)
@@ -34,8 +32,15 @@ class RegexAdapter(private val data: List<RegexItem>, private val onCopy: OnCopy
         h.pattern.setTextIsSelectable(true)
         h.example.setTextIsSelectable(true)
 
-        h.btn.setOnClickListener {
-            onCopy.copy(item.pattern)
+        // Klick: in die Suchliste hinzufügen (und in Ablage kopieren)
+        h.btn.text = "Hinzufügen"
+        h.btn.setOnClickListener { onCopy.copy(item.pattern) }
+
+        // Optional: Langer Druck → nur kopieren (kein Hinzufügen)
+        h.btn.setOnLongClickListener {
+            val cm = it.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("regex", item.pattern))
+            true
         }
     }
 

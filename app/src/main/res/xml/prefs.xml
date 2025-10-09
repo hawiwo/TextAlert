@@ -46,5 +46,9 @@
         android:key="regex_help"
         android:title="Regex-Kurzhilfe"
         android:summary="Beispiele und Copy/Paste"/>
+    <SwitchPreferenceCompat
+        android:key="log_matches"
+        android:title="Treffer in JSON protokollieren"
+        android:defaultValue="true"/>
 
 </PreferenceScreen>

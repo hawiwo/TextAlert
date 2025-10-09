@@ -36,6 +36,9 @@ import androidx.camera.core.AspectRatio
 import android.graphics.RectF
 
 class MainActivity : AppCompatActivity() {
+    private var logMatchesEnabled = false
+    private val LOG_FILE_NAME = "TextAlert_matches.json"
+    private val LOG_DIR = "${android.os.Environment.DIRECTORY_DOCUMENTS}/TextAlert"
     private var annotatePhoto = true
     // Settings-Flags (werden in onCreate und onResume aus Prefs geladen)
     private var extractValuesEnabled = false
@@ -98,6 +101,7 @@ class MainActivity : AppCompatActivity() {
         pauseOnLock = prefs.getBoolean("pause_on_lock", true)
         alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
         annotatePhoto = prefs.getBoolean("annotate_photo", true)
+        logMatchesEnabled = prefs.getBoolean("log_matches", false)
         keywordStore = KeywordStore(this)
 
         // Matcher EINMAL bauen – Lambdas lesen immer die aktuellen Variablen
@@ -160,6 +164,7 @@ class MainActivity : AppCompatActivity() {
         pauseOnLock = prefs.getBoolean("pause_on_lock", true)
         alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
         annotatePhoto = prefs.getBoolean("annotate_photo", true)
+        logMatchesEnabled = prefs.getBoolean("log_matches", false)
         if (this::imageCapture.isInitialized) imageCapture.targetRotation = binding.preview.display.rotation
     }
     private fun startCameraIfAllowed() {
@@ -275,15 +280,8 @@ class MainActivity : AppCompatActivity() {
         try {
             val exif = contentResolver.openInputStream(srcUri)?.use {
                 androidx.exifinterface.media.ExifInterface(it)
-            } ?: run {
-                Toast.makeText(this, "EXIF nicht lesbar", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val bmp = decodeBitmapScaled(srcUri, maxDim = 1920) ?: run {
-                Toast.makeText(this, "Bild nicht decodierbar", Toast.LENGTH_LONG).show()
-                return
-            }
+            } ?: return
+            val bmp = decodeBitmapScaled(srcUri, maxDim = 1920) ?: return
             val oriented = applyExif(
                 bmp,
                 exif.getAttributeInt(
@@ -291,14 +289,37 @@ class MainActivity : AppCompatActivity() {
                     androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
                 )
             )
-
             val input = com.google.mlkit.vision.common.InputImage.fromBitmap(oriented, 0)
             TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
                 .process(input)
                 .addOnSuccessListener { ocr ->
+                    val targets = keywordStore.getAll()
+                    if (targets.isEmpty()) return@addOnSuccessListener
+                    fun looksLikeRegex(s: String): Boolean =
+                        s.startsWith("^") || s.endsWith("$") || s.contains(".*") || s.contains("\\d") || s.contains("[") || s.contains("(?i)")
+                    fun normalize(s: String): String =
+                        java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+                            .replace("\\p{Mn}+".toRegex(), "")
+                            .replace("\\s+".toRegex(), " ")
+                            .trim()
+                    val ci = regexCaseInsensitive
+                    fun findTrigger(line: String): String? {
+                        if (line.isBlank()) return null
+                        val hay = if (ci) normalize(line) else line
+                        for (t in targets) {
+                            if (t.isBlank()) continue
+                            if (looksLikeRegex(t)) {
+                                val opts = if (ci) setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL) else setOf(RegexOption.DOT_MATCHES_ALL)
+                                if (t.toRegex(opts).containsMatchIn(line)) return t
+                            } else {
+                                val needle = if (ci) normalize(t) else t
+                                if (needle.isNotEmpty() && hay.contains(needle)) return t
+                            }
+                        }
+                        return null
+                    }
                     val marked = oriented.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
                     val canvas = android.graphics.Canvas(marked)
-
                     val baseStroke = (kotlin.math.min(marked.width, marked.height) * 0.006f).coerceIn(3f, 12f)
                     val paintOuter = android.graphics.Paint().apply {
                         style = android.graphics.Paint.Style.STROKE
@@ -313,7 +334,6 @@ class MainActivity : AppCompatActivity() {
                         color = android.graphics.Color.RED
                         isAntiAlias = true
                     }
-
                     fun expandRect(src: android.graphics.Rect, padX: Float, padY: Float): android.graphics.RectF {
                         val l = (src.left - padX).coerceAtLeast(0f)
                         val t = (src.top - padY).coerceAtLeast(0f)
@@ -321,28 +341,23 @@ class MainActivity : AppCompatActivity() {
                         val b = (src.bottom + padY).coerceAtMost(marked.height - 1f)
                         return android.graphics.RectF(l, t, r, b)
                     }
-
-                    val targets = keywordStore.getAll()
                     var drawn = false
                     for (b in ocr.textBlocks) {
                         for (ln in b.lines) {
                             val s = ln.text ?: continue
-                            if (matcher.match(s, targets) != null) {
-                                val bb = ln.boundingBox ?: continue
-                                val padX = (bb.width() * 0.08f).coerceAtLeast(6f)
-                                val padY = (bb.height() * 0.25f).coerceAtLeast(6f)
-                                val er = expandRect(bb, padX, padY)
-                                val rxy = (kotlin.math.min(er.width(), er.height()) * 0.08f).coerceIn(8f, 28f)
-                                canvas.drawRoundRect(er, rxy, rxy, paintOuter)
-                                canvas.drawRoundRect(er, rxy, rxy, paintInner)
-                                drawn = true
-                            }
+                            val trigger = findTrigger(s) ?: continue
+                            val bb = ln.boundingBox ?: continue
+                            val padX = (bb.width() * 0.08f).coerceAtLeast(6f)
+                            val padY = (bb.height() * 0.25f).coerceAtLeast(6f)
+                            val er = expandRect(bb, padX, padY)
+                            val rxy = (kotlin.math.min(er.width(), er.height()) * 0.08f).coerceIn(8f, 28f)
+                            canvas.drawRoundRect(er, rxy, rxy, paintOuter)
+                            canvas.drawRoundRect(er, rxy, rxy, paintInner)
+                            appendJsonLog(trigger, s)
+                            drawn = true
                         }
                     }
-
-                    if (!drawn) {
-                        Toast.makeText(this, "Keine Boxen zum Markieren", Toast.LENGTH_SHORT).show()
-                    } else {
+                    if (drawn) {
                         val values = ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, "${baseName}_marked.jpg")
                             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -354,97 +369,12 @@ class MainActivity : AppCompatActivity() {
                                 marked.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it)
                             }
                             Toast.makeText(this, "Markierte Kopie gespeichert", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(this, "Zieldatei nicht anlegbar", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
-                .addOnFailureListener { e ->
-                    Toast.makeText(this, "OCR-Annotation fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-        } catch (e: Exception) {
-            Toast.makeText(this, "Annotieren fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        } catch (_: Exception) { }
     }
 
-    /*
-    private fun annotateSavedPhoto(srcUri: android.net.Uri, baseName: String) {
-        try {
-            // EXIF lesen
-            val exif = contentResolver.openInputStream(srcUri)?.use {
-                androidx.exifinterface.media.ExifInterface(it)
-            } ?: run {
-                Toast.makeText(this, "EXIF nicht lesbar", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            // Bitmap speicherschonend decodieren (maxDim ~ 1920, passt zu 1080p-Erkennung)
-            val bmp = decodeBitmapScaled(srcUri, maxDim = 1920) ?: run {
-                Toast.makeText(this, "Bild nicht decodierbar", Toast.LENGTH_LONG).show()
-                return
-            }
-            val oriented = applyExif(bmp, exif.getAttributeInt(
-                androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
-                androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
-            ))
-
-            // OCR auf GENAU diesem Bitmap
-            val input = com.google.mlkit.vision.common.InputImage.fromBitmap(oriented, 0)
-            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                .process(input)
-                .addOnSuccessListener { ocr ->
-                    val marked = oriented.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-                    val canvas = android.graphics.Canvas(marked)
-                    val p = android.graphics.Paint().apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 6f
-                        color = android.graphics.Color.RED
-                        isAntiAlias = true
-                    }
-
-                    val targets = keywordStore.getAll()
-                    var drawn = false
-                    for (b in ocr.textBlocks) {
-                        for (ln in b.lines) {
-                            val s = ln.text ?: ""
-                            if (matcher.match(s, targets) != null) {
-                                ln.boundingBox?.let {
-                                    canvas.drawRect(it, p)  // 1:1 Koordinaten zum Bitmap
-                                    drawn = true
-                                }
-                            }
-                        }
-                    }
-
-                    if (!drawn) {
-                        Toast.makeText(this, "Keine Boxen zum Markieren", Toast.LENGTH_SHORT).show()
-                    } else {
-                        // markierte Kopie speichern
-                        val values = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, "${baseName}_marked.jpg")
-                            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                            if (Build.VERSION.SDK_INT >= 29)
-                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/TextAlert")
-                        }
-                        val dest = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                        if (dest != null) {
-                            contentResolver.openOutputStream(dest)?.use {
-                                marked.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it)
-                            }
-                            Toast.makeText(this, "Markierte Kopie gespeichert", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(this, "Zieldatei nicht anlegbar", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
-                .addOnFailureListener { e ->
-                    Toast.makeText(this, "OCR-Annotation fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-        } catch (e: Exception) {
-            Toast.makeText(this, "Annotieren fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-    */
     private fun decodeBitmapScaled(uri: android.net.Uri, maxDim: Int): android.graphics.Bitmap? {
         // Größe ermitteln
         val opts1 = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -490,5 +420,67 @@ class MainActivity : AppCompatActivity() {
             bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
         }
     }
+    private fun getOrCreateLogFileUri(): android.net.Uri? {
+        val resolver = contentResolver
+        val collection = android.provider.MediaStore.Files.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
+        // versuchen, vorhandene Datei in Documents/TextAlert zu finden
+        val projection = arrayOf(
+            android.provider.MediaStore.MediaColumns._ID,
+            android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+            android.provider.MediaStore.MediaColumns.RELATIVE_PATH
+        )
+        val selection = "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH}=?"
+        val relPath = "$LOG_DIR/" // mit Slash!
+        val args = arrayOf(LOG_FILE_NAME, relPath)
+
+        resolver.query(collection, projection, selection, args, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val id = c.getLong(0)
+                return android.content.ContentUris.withAppendedId(collection, id)
+            }
+        }
+
+        // nicht gefunden → neu anlegen
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, LOG_FILE_NAME)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/json")
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relPath)
+            }
+        }
+        return resolver.insert(collection, values)
+    }
+    private fun appendJsonLog(matchText: String, foundText: String) {
+        if (!logMatchesEnabled) return
+        val uri = getOrCreateLogFileUri() ?: run {
+            android.widget.Toast.makeText(this, "Logdatei konnte nicht angelegt werden", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val obj = org.json.JSONObject().apply {
+            put("ts", System.currentTimeMillis())
+            put("match", matchText)
+            put("text", foundText)
+        }
+        val line = obj.toString() + "\n"
+
+        // Versuch 1: echtes Append
+        try {
+            val out = contentResolver.openOutputStream(uri, "wa")
+            if (out != null) {
+                out.use { it.write(line.toByteArray(Charsets.UTF_8)) }
+                return
+            }
+        } catch (_: Exception) { /* weiter zum Fallback */ }
+
+        // Fallback: alten Inhalt lesen und komplett neu schreiben
+        try {
+            val old = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+            val newData = old + line.toByteArray(Charsets.UTF_8)
+            contentResolver.openOutputStream(uri, "rwt")?.use { it.write(newData) }
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "JSON-Append fehlgeschlagen: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 }
