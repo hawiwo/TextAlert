@@ -36,6 +36,7 @@ import androidx.camera.core.AspectRatio
 import android.graphics.RectF
 
 class MainActivity : AppCompatActivity() {
+    private var confirmBeforeActions = false
     private var logMatchesEnabled = false
     private val LOG_FILE_NAME = "TextAlert_matches.json"
     private val LOG_DIR = "${android.os.Environment.DIRECTORY_DOCUMENTS}/TextAlert"
@@ -102,6 +103,8 @@ class MainActivity : AppCompatActivity() {
         alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
         annotatePhoto = prefs.getBoolean("annotate_photo", true)
         logMatchesEnabled = prefs.getBoolean("log_matches", false)
+        confirmBeforeActions = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("confirm_before_actions", false)
+
         keywordStore = KeywordStore(this)
 
         // Matcher EINMAL bauen – Lambdas lesen immer die aktuellen Variablen
@@ -165,6 +168,8 @@ class MainActivity : AppCompatActivity() {
         alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
         annotatePhoto = prefs.getBoolean("annotate_photo", true)
         logMatchesEnabled = prefs.getBoolean("log_matches", false)
+        confirmBeforeActions = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("confirm_before_actions", false)
+
         if (this::imageCapture.isInitialized) imageCapture.targetRotation = binding.preview.display.rotation
     }
     private fun startCameraIfAllowed() {
@@ -280,14 +285,10 @@ class MainActivity : AppCompatActivity() {
         try {
             val exif = contentResolver.openInputStream(srcUri)?.use {
                 androidx.exifinterface.media.ExifInterface(it)
-            } ?: run {
-                Toast.makeText(this, "EXIF nicht lesbar", Toast.LENGTH_SHORT).show()
-                return
-            }
+            } ?: run { Toast.makeText(this, "EXIF nicht lesbar", Toast.LENGTH_SHORT).show(); return }
 
             val bmp = decodeBitmapScaled(srcUri, maxDim = 1920) ?: run {
-                Toast.makeText(this, "Bild nicht decodierbar", Toast.LENGTH_LONG).show()
-                return
+                Toast.makeText(this, "Bild nicht decodierbar", Toast.LENGTH_LONG).show(); return
             }
             val oriented = applyExif(
                 bmp,
@@ -302,86 +303,74 @@ class MainActivity : AppCompatActivity() {
                 .process(input)
                 .addOnSuccessListener { ocr ->
                     val targets = keywordStore.getAll()
-                    if (targets.isEmpty()) return@addOnSuccessListener
+                    if (targets.isEmpty()) { Toast.makeText(this, "Keine Suchtexte", Toast.LENGTH_SHORT).show(); return@addOnSuccessListener }
 
                     val ci = regexCaseInsensitive
-
-                    // Targets vorbereiten: gültige Regexe kompilieren, Literale normalisieren (bei CI)
-                    val compiledRegexes = mutableListOf<Pair<String, Regex>>() // (original, compiled)
+                    val compiledRegexes = mutableListOf<Pair<String, Regex>>()
                     val literals = mutableListOf<String>()
-                    var invalidCount = 0
                     for (t in targets) {
                         if (t.isBlank()) continue
                         if (RegexUtils.looksLikeRegex(t)) {
-                            val rx = RegexUtils.compileOrNull(t, ignoreCase = ci)
-                            if (rx != null) compiledRegexes += t to rx else invalidCount++
+                            RegexUtils.compileOrNull(t, ignoreCase = ci)?.let { compiledRegexes += t to it }
                         } else {
                             literals += if (ci) RegexUtils.normalize(t) else t
                         }
                     }
-                    if (invalidCount > 0) {
-                        Toast.makeText(this, "Hinweis: $invalidCount ungültige Regex übersprungen", Toast.LENGTH_SHORT).show()
-                    }
 
-                    fun findTrigger(line: String): String? {
-                        if (line.isBlank()) return null
-                        // 1) Regexe prüfen (auf Original-Text, da Regex selbst Case-Option trägt)
-                        for ((orig, rx) in compiledRegexes) {
-                            if (rx.containsMatchIn(line)) return orig
-                        }
-                        // 2) Literale prüfen (optional CI via normalize)
-                        val hay = if (ci) RegexUtils.normalize(line) else line
+                    fun triggerFor(text: String): String? {
+                        if (text.isBlank()) return null
+                        for ((orig, rx) in compiledRegexes) if (rx.containsMatchIn(text)) return orig
+                        val hay = if (ci) RegexUtils.normalize(text) else text
                         for (lit in literals) if (lit.isNotEmpty() && hay.contains(lit)) return lit
                         return null
                     }
 
-                    val marked = oriented.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-                    val canvas = android.graphics.Canvas(marked)
-
-                    // „Luftige“ Doppelkontur
-                    val baseStroke = (kotlin.math.min(marked.width, marked.height) * 0.006f).coerceIn(3f, 12f)
-                    val paintOuter = android.graphics.Paint().apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = baseStroke * 1.8f
-                        color = android.graphics.Color.BLACK
-                        alpha = 120
-                        isAntiAlias = true
-                    }
-                    val paintInner = android.graphics.Paint().apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = baseStroke
-                        color = android.graphics.Color.RED
-                        isAntiAlias = true
-                    }
-
-                    fun expandRect(src: android.graphics.Rect, padX: Float, padY: Float): android.graphics.RectF {
-                        val l = (src.left - padX).coerceAtLeast(0f)
-                        val t = (src.top - padY).coerceAtLeast(0f)
-                        val r = (src.right + padX).coerceAtMost(marked.width - 1f)
-                        val b = (src.bottom + padY).coerceAtMost(marked.height - 1f)
-                        return android.graphics.RectF(l, t, r, b)
-                    }
-
-                    var drawn = false
+                    data class Hit(val rect: android.graphics.Rect, val trigger: String, val line: String)
+                    val hits = mutableListOf<Hit>()
                     for (b in ocr.textBlocks) {
                         for (ln in b.lines) {
-                            val textLine = ln.text ?: continue
-                            val trigger = findTrigger(textLine) ?: continue
+                            val s = ln.text ?: continue
+                            val trig = triggerFor(s) ?: continue
                             val bb = ln.boundingBox ?: continue
-
-                            val padX = (bb.width() * 0.08f).coerceAtLeast(6f)
-                            val padY = (bb.height() * 0.25f).coerceAtLeast(6f)
-                            val er = expandRect(bb, padX, padY)
-                            val rxy = (kotlin.math.min(er.width(), er.height()) * 0.08f).coerceIn(8f, 28f)
-
-                            canvas.drawRoundRect(er, rxy, rxy, paintOuter)
-                            canvas.drawRoundRect(er, rxy, rxy, paintInner)
-                            appendJsonLog(trigger, textLine) // JSON-Logging pro Trefferzeile
-                            drawn = true
+                            hits += Hit(bb, trig, s)
                         }
                     }
 
-                    if (drawn) {
+                    if (hits.isEmpty()) { Toast.makeText(this, "Keine Boxen zum Markieren", Toast.LENGTH_SHORT).show(); return@addOnSuccessListener }
+
+                    fun drawAndSave() {
+                        val marked = oriented.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+                        val canvas = android.graphics.Canvas(marked)
+                        val baseStroke = (kotlin.math.min(marked.width, marked.height) * 0.006f).coerceIn(3f, 12f)
+                        val pOuter = android.graphics.Paint().apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = baseStroke * 1.8f
+                            color = android.graphics.Color.BLACK
+                            alpha = 120
+                            isAntiAlias = true
+                        }
+                        val pInner = android.graphics.Paint().apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = baseStroke
+                            color = android.graphics.Color.RED
+                            isAntiAlias = true
+                        }
+                        fun expandRect(src: android.graphics.Rect, padX: Float, padY: Float): android.graphics.RectF {
+                            val l = (src.left - padX).coerceAtLeast(0f)
+                            val t = (src.top - padY).coerceAtLeast(0f)
+                            val r = (src.right + padX).coerceAtMost(marked.width - 1f)
+                            val b = (src.bottom + padY).coerceAtMost(marked.height - 1f)
+                            return android.graphics.RectF(l, t, r, b)
+                        }
+                        for (h in hits) {
+                            val padX = (h.rect.width() * 0.08f).coerceAtLeast(6f)
+                            val padY = (h.rect.height() * 0.25f).coerceAtLeast(6f)
+                            val er = expandRect(h.rect, padX, padY)
+                            val rxy = (kotlin.math.min(er.width(), er.height()) * 0.08f).coerceIn(8f, 28f)
+                            canvas.drawRoundRect(er, rxy, rxy, pOuter)
+                            canvas.drawRoundRect(er, rxy, rxy, pInner)
+                            appendJsonLog(h.trigger, h.line)
+                        }
                         val values = ContentValues().apply {
                             put(MediaStore.MediaColumns.DISPLAY_NAME, "${baseName}_marked.jpg")
                             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -389,15 +378,25 @@ class MainActivity : AppCompatActivity() {
                         }
                         val dest = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                         if (dest != null) {
-                            contentResolver.openOutputStream(dest)?.use {
-                                marked.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it)
-                            }
+                            contentResolver.openOutputStream(dest)?.use { marked.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }
                             Toast.makeText(this, "Markierte Kopie gespeichert", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(this, "Zieldatei nicht anlegbar", Toast.LENGTH_LONG).show()
                         }
+                    }
+
+                    if (confirmBeforeActions) {
+                        val preview = hits.take(6).joinToString("\n") { "• ${it.line}" }
+                        runOnUiThread {
+                            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                                .setTitle("Treffer bestätigen?")
+                                .setMessage(preview)
+                                .setPositiveButton("Ja") { _, _ -> drawAndSave() }
+                                .setNegativeButton("Nein", null)
+                                .show()
+                        }
                     } else {
-                        Toast.makeText(this, "Keine Boxen zum Markieren", Toast.LENGTH_SHORT).show()
+                        drawAndSave()
                     }
                 }
                 .addOnFailureListener { e ->
@@ -407,6 +406,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Annotieren fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
+
 
     private fun decodeBitmapScaled(uri: android.net.Uri, maxDim: Int): android.graphics.Bitmap? {
         // Größe ermitteln

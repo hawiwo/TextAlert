@@ -50,5 +50,8 @@
         android:key="log_matches"
         android:title="Treffer in JSON protokollieren"
         android:defaultValue="true"/>
-
+    <SwitchPreferenceCompat
+        android:key="confirm_before_actions"
+        android:title="Bestätig vor Protokollierung"
+        android:defaultValue="false"/>
 </PreferenceScreen>
