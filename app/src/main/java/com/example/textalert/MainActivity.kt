@@ -36,6 +36,8 @@ import androidx.camera.core.AspectRatio
 import android.graphics.RectF
 
 class MainActivity : AppCompatActivity() {
+    private var logAllTextEnabled = false
+    private val LOG_ALL_FILE_NAME = "TextAlert_alltext.log"
     private var confirmBeforeActions = false
     private var logMatchesEnabled = false
     private val LOG_FILE_NAME = "TextAlert_matches.json"
@@ -103,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         alertIntervalMs = prefs.getString("alert_interval_ms", "1200")!!.toLong()
         annotatePhoto = prefs.getBoolean("annotate_photo", true)
         logMatchesEnabled = prefs.getBoolean("log_matches", false)
+        logAllTextEnabled = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("log_all_text_enabled", false)
         confirmBeforeActions = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("confirm_before_actions", false)
 
         keywordStore = KeywordStore(this)
@@ -169,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         annotatePhoto = prefs.getBoolean("annotate_photo", true)
         logMatchesEnabled = prefs.getBoolean("log_matches", false)
         confirmBeforeActions = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("confirm_before_actions", false)
+        logAllTextEnabled = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("log_all_text_enabled", false)
 
         if (this::imageCapture.isInitialized) imageCapture.targetRotation = binding.preview.display.rotation
     }
@@ -217,26 +221,83 @@ class MainActivity : AppCompatActivity() {
             }
             .addOnCompleteListener { image.close() }
     }
-    private fun handleResult(text: Text) {
+    private fun handleResult(text: com.google.mlkit.vision.text.Text) {
         val now = System.currentTimeMillis()
         val full = text.text ?: ""
         binding.debugText.text = full.take(200).replace("\n", " ")
+
+        // 1) Vorrang: "Erkannten Text loggen" -> alles andere ignorieren
+        if (logAllTextEnabled) {
+            if (full.isNotBlank() && now - lastAlertAt > alertIntervalMs) {
+                lastAlertAt = now
+                appendAllTextLog(full)
+            }
+            return
+        }
+
+        // 2) Ziele vorbereiten (ohne matcher)
         val targets = keywordStore.getAll()
-        val hit = matcher.match(full, targets)
-        if (hit != null) {
-            val boxes = mutableListOf<RectF>()
-            for (b in text.textBlocks) {
-                for (ln in b.lines) {
-                    val s = ln.text ?: ""
-                    if (matcher.match(s, listOf(hit)) != null) {
-                        ln.boundingBox?.let { boxes.add(RectF(it)) }
-                    }
-                }
+        if (targets.isEmpty()) return
+
+        val ci = regexCaseInsensitive
+        val compiledRegexes = mutableListOf<Pair<String, Regex>>()   // (original, compiled)
+        val literals = mutableListOf<String>()
+        for (t in targets) {
+            if (t.isBlank()) continue
+            if (RegexUtils.looksLikeRegex(t)) {
+                RegexUtils.compileOrNull(t, ignoreCase = ci)?.let { compiledRegexes += t to it }
+            } else {
+                literals += if (ci) RegexUtils.normalize(t) else t
             }
         }
-        if (hit != null && now - lastAlertAt > alertIntervalMs) {
+        // nichts Gültiges -> raus
+        if (compiledRegexes.isEmpty() && literals.isEmpty()) return
+
+        fun anyHitIn(textLine: String): String? {
+            if (textLine.isBlank()) return null
+            // Regexe zuerst (auf Original-Text, Case per RegexOption)
+            for ((orig, rx) in compiledRegexes) if (rx.containsMatchIn(textLine)) return orig
+            // dann Literale (ggf. normalisiert)
+            val hay = if (ci) RegexUtils.normalize(textLine) else textLine
+            for (lit in literals) if (lit.isNotEmpty() && hay.contains(lit)) return lit
+            return null
+        }
+
+        // 3) Suchen: Zeilen -> Blöcke -> Gesamttest
+        var trigger: String? = null
+
+        // Zeilen
+        outer@ for (b in text.textBlocks) {
+            for (ln in b.lines) {
+                val s = ln.text ?: continue
+                trigger = anyHitIn(s)
+                if (trigger != null) break@outer
+            }
+        }
+
+        // Blöcke (falls Zeilen nichts ergaben)
+        if (trigger == null) {
+            for (b in text.textBlocks) {
+                val s = b.text ?: continue
+                trigger = anyHitIn(s)
+                if (trigger != null) break
+            }
+        }
+
+        // Gesamterkannter Text (Fallback)
+        if (trigger == null) {
+            trigger = anyHitIn(full)
+        }
+
+        // 4) Alarm + Foto (mit Mindestabstand)
+        if (trigger != null && now - lastAlertAt > alertIntervalMs) {
             lastAlertAt = now
-            if (beepEnabled) tone.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
+            if (beepEnabled) {
+                // Falls Gerät stumm ist, hört man evtl. nichts – das ist normal.
+                tone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 200)
+                // DEBUG: kurz anzeigen, was angeschlagen hat (zum Testen; später entfernen)
+                //Toast.makeText(this, "Treffer: $trigger", Toast.LENGTH_SHORT).show()
+            }
             if (photoOnMatch) takePhoto()
         }
     }
@@ -516,4 +577,37 @@ class MainActivity : AppCompatActivity() {
             android.widget.Toast.makeText(this, "JSON-Append fehlgeschlagen: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
         }
     }
+    private fun getOrCreateAllTextUri(): android.net.Uri? {
+        val resolver = contentResolver
+        val collection = android.provider.MediaStore.Files.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val projection = arrayOf(android.provider.MediaStore.MediaColumns._ID, android.provider.MediaStore.MediaColumns.DISPLAY_NAME, android.provider.MediaStore.MediaColumns.RELATIVE_PATH)
+        val relPath = "$LOG_DIR/"
+        val sel = "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${android.provider.MediaStore.MediaColumns.RELATIVE_PATH}=?"
+        val args = arrayOf(LOG_ALL_FILE_NAME, relPath)
+        resolver.query(collection, projection, sel, args, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val id = c.getLong(0)
+                return android.content.ContentUris.withAppendedId(collection, id)
+            }
+        }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, LOG_ALL_FILE_NAME)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            if (android.os.Build.VERSION.SDK_INT >= 29) put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relPath)
+        }
+        return resolver.insert(collection, values)
+    }
+
+    private fun appendAllTextLog(foundText: String) {
+        val uri = getOrCreateAllTextUri() ?: return
+        val line = "${System.currentTimeMillis()}\t${foundText.replace("\n", " ").take(4000)}\n"
+        try {
+            contentResolver.openOutputStream(uri, "wa")?.use { it.write(line.toByteArray(Charsets.UTF_8)) } ?: run {
+                val old = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                val newData = old + line.toByteArray(Charsets.UTF_8)
+                contentResolver.openOutputStream(uri, "rwt")?.use { it.write(newData) }
+            }
+        } catch (_: Exception) { }
+    }
+
 }

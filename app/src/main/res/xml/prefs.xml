@@ -54,4 +54,8 @@
         android:key="confirm_before_actions"
         android:title="Bestätig vor Protokollierung"
         android:defaultValue="false"/>
+    <SwitchPreferenceCompat
+        android:key="log_all_text_enabled"
+        android:title="Erkannten Text loggen"
+        android:defaultValue="false"/>
 </PreferenceScreen>
